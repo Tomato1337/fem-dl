@@ -13,7 +13,7 @@ export const QUALITY_FORMAT = {
     360: ['index_360_Q8_2mbps']
 }
 
-export const FEM_COURSE_REG = /(:?https?:\/\/)?frontendmasters\.com\/courses\/([^/]+)/
+export const FEM_COURSE_REG = /(:?https?:\/\/)?frontendmasters\.com\/(courses|workshops)\/([^/]+)/
 
 export const SUPPORTED_FORMATS = [
     'mp4',

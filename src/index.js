@@ -21,6 +21,8 @@ const exitOnCancel = (state) => {
     if (state.aborted) process.nextTick(() => process.exit(0))
 }
 
+let isWorkshop = false
+let courseName = ''
 
 const {
     COURSE_SLUG,
@@ -33,9 +35,16 @@ const {
     type: 'text',
     name: 'COURSE_SLUG',
     message: 'The url of the course you want to download',
-    initial: env['FEM_DL_COURSE_URL'] || 'https://frontendmasters.com/courses/...',
+    initial: env['FEM_DL_COURSE_URL'] || 'https://frontendmasters.com/(courses|workshops)/...',
     validate: v => !v.endsWith('...') && FEM_COURSE_REG.test(v),
-    format: v => v.match(FEM_COURSE_REG)[2],
+    format: (v) => {
+        const row = v.match(FEM_COURSE_REG)
+        if (row[2] === 'workshops') {
+            isWorkshop = true
+            courseName = row[3]
+        }
+        return row.slice(2).join('/')
+    },
     onState: exitOnCancel
 }, {
     type: 'password',
@@ -92,31 +101,38 @@ const fetch = extendedFetch({
 }, cookies)
 
 const spinner = ora(`Searching for ${COURSE_SLUG}...`).start()
-const course = await fetch.json(`${FEM_API_ENDPOINT}/kabuki/courses/${COURSE_SLUG}`)
+const course = await fetch.json(`${FEM_API_ENDPOINT}/kabuki/${COURSE_SLUG}`)
 
 if (course.code === 404) {
     spinner.fail(`Couldn't find this course "${COURSE_SLUG}"`)
     process.exit()
 }
 
+const baseData = isWorkshop ? course.playlistJson : course
 
-for (const data of Object.values(course.lessonData)) course.lessonElements[course.lessonElements.findIndex(x => x === data.index)] = {
+for (const data of Object.values(baseData.lessonData)) baseData.lessonElements[baseData.lessonElements.findIndex(x => x === data.index)] = {
     title: data.title,
     slug: data.slug,
-    url: `${data.sourceBase}/source?f=${PLAYLIST_EXT}`,
+    url: isWorkshop ? data.streamURL : `${data.sourceBase}/source?f=${PLAYLIST_EXT}`,
     index: data.index
 }
 
-const [lessons, totalEpisodes] = course.lessonElements.reduce((acc, cur) => {
-    if (typeof cur === 'string') (acc[0][cur] = [], acc[2] = cur)
-    else (acc[0][acc[2]].push(cur), acc[1]++)
-    return acc
+const [lessons, totalEpisodes] = baseData.lessonElements.reduce((acc, cur) => {
+    if (isWorkshop) {
+        acc[0][cur.title] = [cur]
+        acc[1]++
+        return acc
+    } else {
+        if (typeof cur === 'string') (acc[0][cur] = []), (acc[2] = cur)
+        else acc[0][acc[2]].push(cur), acc[1]++
+        return acc
+    }
 }, [{}, 0, ''])
 
 
 let i = 1, x = 0, QUALITY = PREFERRED_QUALITY, downgradeAlert = false
 
-const coursePath = safeJoin(DOWNLOAD_DIR, course.title)
+const coursePath = safeJoin(DOWNLOAD_DIR, course.title || courseName)
 
 for (const [lesson, episodes] of Object.entries(lessons)) {
     const
@@ -140,7 +156,8 @@ for (const [lesson, episodes] of Object.entries(lessons)) {
         }
 
 
-        let { url: m3u8RequestUrl } = await fetch.json(episode.url)
+        const res = !isWorkshop && (await fetch.json(episode.url))
+        const m3u8RequestUrl = isWorkshop ? episode.url : res.url
         const availableQualities = await fetch.text(m3u8RequestUrl)
 
         // Automatically downgrade quality when preferred quality not found
